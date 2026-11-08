@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f1a17">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Train">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>Train</title>
+<style>
+:root{--bg:#0f1a17;--card:#17231f;--raise:#1e2d28;--line:#2a3b34;--tx:#eef3ef;--mu:#8da39a;--ac:#ffc247;--bad:#ff7a66;--ok:#6fe0a0;color-scheme:dark}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--tx);font:16px/1.4 -apple-system,system-ui,"SF Pro Text",Roboto,sans-serif;touch-action:manipulation}
+#view{position:fixed;left:0;right:0;top:env(safe-area-inset-top);bottom:calc(66px + env(safe-area-inset-bottom));overflow-y:auto;-webkit-overflow-scrolling:touch;padding:20px 16px 28px}
+h1{font-size:32px;line-height:1.08;letter-spacing:-.025em;font-weight:800;margin:0 0 18px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;margin:0 0 12px}
+.card h2{font-size:16px;font-weight:700;margin:0 0 8px}
+.card p{margin:0 0 8px}.card p:last-child{margin:0}
+.mu{color:var(--mu)}.ok{color:var(--ok)}.no{color:var(--bad)}.wn{color:var(--ac)}
+.row{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:0;padding-bottom:0}
+.row span:last-child{text-align:right;font-variant-numeric:tabular-nums}
+.btn{appearance:none;border:1px solid var(--line);background:var(--raise);color:var(--tx);font:inherit;font-weight:650;min-height:50px;padding:0 16px;border-radius:12px;width:100%}
+.btn.pri{background:var(--ac);border-color:var(--ac);color:#1a1405}
+.btn.bad{color:var(--bad);border-color:#5a2f28;background:transparent}
+.btn:active{transform:scale(.98);opacity:.85}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.gap{margin-top:8px}
+.ban{border-radius:14px;padding:14px;margin:0 0 12px;border:1px solid #5d4a1c;background:#2b2411}
+.ban.bad{border-color:#6b3028;background:#2d1815}
+.ban b{display:block;margin-bottom:2px}
+.ban .btn{margin-top:10px;min-height:44px}
+#tabs{position:fixed;left:0;right:0;bottom:0;height:calc(66px + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom);display:grid;grid-template-columns:repeat(5,1fr);background:#121f1b;border-top:1px solid var(--line)}
+#tabs button{appearance:none;border:0;background:none;color:var(--mu);font:inherit;font-size:11px;font-weight:600;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px}
+#tabs button.on{color:var(--ac)}
+#tabs svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+#sheet{position:fixed;inset:0;background:rgba(0,0,0,.62);display:flex;align-items:flex-end;z-index:20}
+#sheet[hidden]{display:none}
+.box{background:#1a2823;width:100%;border-radius:24px 24px 0 0;padding:22px 16px calc(16px + env(safe-area-inset-bottom));max-height:88%;overflow:auto}
+.box h3{margin:0 0 8px;font-size:21px;letter-spacing:-.01em}
+.box p{margin:0 0 8px}
+.acts{display:grid;gap:8px;margin-top:14px}
+input[type=text]{width:100%;font:inherit;font-size:16px;padding:12px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--tx);margin-top:10px}
+.cmp{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;margin:8px 0}
+.cmp th{color:var(--mu);font-weight:600}.cmp th,.cmp td{padding:5px 0;text-align:right}.cmp td:first-child,.cmp th:first-child{text-align:left}
+#toast{position:fixed;left:50%;bottom:calc(82px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--tx);color:#0f1a17;padding:10px 16px;border-radius:999px;font-weight:650;z-index:30;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90%;text-align:center}
+#toast.on{opacity:1}
+</style>
+</head>
+<body>
+<main id="view"></main>
+<nav id="tabs"></nav>
+<div id="sheet" hidden></div>
+<div id="toast"></div>
+<input type="file" id="file" accept=".json,application/json" hidden>
+<script>
+const APP_ID='gym-tracker',SCHEMA=1,VER='0.1.0 (stage 1)';
+const K={d:'gt:data',s:'gt:snap',sm:'gt:snapmeta',b:'gt:lastbackup'};
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+const iso=()=>new Date().toISOString();
+const today=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
+
+/* ---------- Data schema v1 (weekdays: 0=Sun … 6=Sat; all weights in kg) ---------- */
+const newData=()=>({app:APP_ID,schemaVersion:SCHEMA,createdAt:iso(),
+ profile:{heightCm:178,sex:'male',goalWeightKg:73,targetKcal:null,targetProteinG:null},
+ settings:{restTimerSec:90,activeScheduleMode:'preseason',loadStepKg:2.5,backupReminderDays:7},
+ schedule:{modes:{preseason:{football:[2,4],matchDay:null},season:{football:[1,3,4],matchDay:null}},weekOverrides:{}},
+ exercises:[],plan:null,workouts:[],cardio:[],benchmarks:[],bodyWeight:[],checkins:[],
+ nutrition:{foods:[],recipes:[],mealPlans:[],mealLog:[]}});
+// Future versions: add a step here, e.g. MIGRATIONS[1]=d=>{…change shape…;d.schemaVersion=2;return d}
+const MIGRATIONS={};
+const migrate=d=>{while(d.schemaVersion<SCHEMA){const f=MIGRATIONS[d.schemaVersion];if(!f)throw Error('No migration from v'+d.schemaVersion);d=f(d)}return d};
+const normalize=d=>{const b=newData();for(const k in b)if(d[k]===undefined)d[k]=b[k];
+ for(const k of ['profile','settings','schedule'])d[k]={...b[k],...d[k]};
+ d.nutrition={...b.nutrition,...d.nutrition};return d};
+function validate(raw){
+ let d;try{d=typeof raw==='string'?JSON.parse(raw):raw}catch{return{error:'That file is not valid JSON.'}}
+ if(!d||typeof d!=='object'||Array.isArray(d)||d.app!==APP_ID)return{error:'This is not a backup from this app.'};
+ if(!Number.isInteger(d.schemaVersion)||d.schemaVersion<1)return{error:'The file has no valid schema version.'};
+ if(d.schemaVersion>SCHEMA)return{error:'This backup is from a newer app version (schema v'+d.schemaVersion+'). Update the app first.'};
+ try{d=normalize(migrate(d))}catch(e){return{error:e.message}}
+ if(!['exercises','workouts','cardio','benchmarks','bodyWeight','checkins'].every(k=>Array.isArray(d[k]))||!['foods','recipes','mealPlans','mealLog'].every(k=>Array.isArray(d.nutrition[k])))return{error:'The data in this file is incomplete or corrupted.'};
+ return{data:d}}
+
+/* ---------- Storage ---------- */
+let loadError='',offlineReady=false,persisted=false,tab='today';
+const load=()=>{const raw=localStorage.getItem(K.d);if(!raw)return newData();const r=validate(raw);
+ if(r.error){try{localStorage.setItem('gt:corrupt',raw)}catch{}loadError=r.error;return newData()}return r.data};
+let D=load();
+const snap=()=>{try{const p=localStorage.getItem(K.d);if(p){localStorage.setItem(K.s,p);localStorage.setItem(K.sm,iso())}}catch{}};
+function save(){try{if((localStorage.getItem(K.sm)||'').slice(0,10)!==iso().slice(0,10))snap();D.updatedAt=iso();localStorage.setItem(K.d,JSON.stringify(D));return true}
+ catch{toast('Could not save: storage is full or blocked');return false}}
+navigator.storage?.persist?.().then(v=>{persisted=v}).catch(()=>{});
+
+/* ---------- Helpers ---------- */
+const counts=d=>[['Workouts',d.workouts.length],['Cardio sessions',d.cardio.length],['Weigh-ins',d.bodyWeight.length],['Check-ins',d.checkins.length],['Exercises',d.exercises.length],['Recipes',d.nutrition.recipes.length],['Plan sessions',d.plan?.sessions?.length||0]];
+const hasData=()=>counts(D).some(c=>c[1]>0);
+const ago=t=>{if(!t)return'never';const n=Math.floor((Date.now()-new Date(t))/864e5);return n<1?'today':n===1?'yesterday':n+' days ago'};
+const lastB=()=>localStorage.getItem(K.b);
+const backupDue=()=>hasData()&&(!lastB()||(Date.now()-new Date(lastB()))/864e5>D.settings.backupReminderDays);
+const standalone=()=>navigator.standalone||matchMedia('(display-mode: standalone)').matches;
+let tt;function toast(m){const e=$('#toast');e.textContent=m;e.classList.add('on');clearTimeout(tt);tt=setTimeout(()=>e.classList.remove('on'),2400)}
+function sheet({title,body='',actions=[],input}){
+ const el=$('#sheet');
+ el.innerHTML=`<div class="box"><h3>${esc(title)}</h3>${body}${input?'<input type="text" id="sin" autocapitalize="characters" autocomplete="off" placeholder="'+esc(input)+'">':''}<div class="acts">${actions.map((a,i)=>`<button class="btn ${a.cls||''}" data-i="${i}">${esc(a.t)}</button>`).join('')}</div></div>`;
+ el.hidden=false;
+ el.onclick=e=>{const b=e.target.closest('[data-i]');
+  if(b){const a=actions[b.dataset.i];if(a.need&&$('#sin').value.trim()!==a.need)return toast('Type '+a.need+' to confirm');el.hidden=true;a.fn&&a.fn()}
+  else if(e.target===el)el.hidden=true}}
+async function out(name,text,type){
+ const f=new File([text],name,{type});
+ try{if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f],title:name});return true}}catch(e){if(e.name==='AbortError')return false}
+ const a=document.createElement('a');a.href=URL.createObjectURL(f);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),5000);return true}
+function csv(){
+ const ex=Object.fromEntries(D.exercises.map(e=>[e.id,e.name])),q=v=>{v=String(v??'');return/[",\r\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v};
+ const rows=[['date','workout_id','session','exercise','set','kg','reps','rpe','superset','notes']];
+ [...D.workouts].sort((a,b)=>a.date.localeCompare(b.date)).forEach(w=>(w.sets||[]).forEach((s,i)=>rows.push([w.date,w.id,w.sessionId||'',ex[s.exerciseId]||s.exerciseId,i+1,s.kg,s.reps,s.rpe,s.supersetGroup,s.note])));
+ return'\uFEFF'+rows.map(r=>r.map(q).join(',')).join('\r\n')}
+
+/* ---------- Actions ---------- */
+const A={
+ async exportJson(){if(await out('train-backup-'+today()+'.json',JSON.stringify({...D,exportedAt:iso()},null,1),'application/json')){localStorage.setItem(K.b,iso());toast('Backup exported');render()}},
+ async exportCsv(){if(await out('train-workouts-'+today()+'.csv',csv(),'text/csv'))toast('CSV exported')},
+ importPick(){$('#file').click()},
+ restore(){const r=validate(localStorage.getItem(K.s)||'');
+  if(r.error)return toast('No usable snapshot');
+  sheet({title:'Restore snapshot?',body:'<p>Replaces current data with the snapshot from '+esc(ago(localStorage.getItem(K.sm)))+'.</p>'+cmp(r.data),actions:[{t:'Cancel'},{t:'Restore snapshot',cls:'pri',fn:()=>{D=r.data;save();toast('Snapshot restored');render()}}]})},
+ reset(){sheet({title:'Delete all data?',body:'<p>This permanently erases every workout, weigh-in, plan and setting on this device, including the safety snapshot. Export a backup first if you might want it back.</p>',input:'Type DELETE',
+  actions:[{t:'Cancel'},{t:'Delete everything',cls:'bad',need:'DELETE',fn:()=>{Object.values(K).forEach(k=>localStorage.removeItem(k));localStorage.removeItem('gt:corrupt');D=newData();loadError='';toast('All data deleted');render()}}]})},
+ addTest(){D.bodyWeight.push({id:uid(),date:today(),kg:81,ts:iso(),test:true});if(save()){toast('Test weigh-in added');render()}},
+ clearTest(){D.bodyWeight=D.bodyWeight.filter(x=>!x.test);if(save()){toast('Test entries removed');render()}}
+};
+function cmp(n){const c=counts(n),o=counts(D);return'<table class="cmp"><tr><th></th><th>Now</th><th>New</th></tr>'+c.map((r,i)=>`<tr><td>${r[0]}</td><td>${o[i][1]}</td><td>${r[1]}</td></tr>`).join('')+'</table>'}
+async function pickImport(f){
+ const r=validate(await f.text());
+ if(r.error)return sheet({title:'Cannot import',body:'<p>'+esc(r.error)+'</p>',actions:[{t:'OK'}]});
+ sheet({title:'Import this backup?',body:'<p class="mu">'+esc(f.name)+'<br>Exported '+(r.data.exportedAt?esc(new Date(r.data.exportedAt).toLocaleString('en-GB')):'(date unknown)')+'</p>'+cmp(r.data)+'<p class="mu">This replaces everything on this device. A safety snapshot of your current data is saved first.</p>',
+  actions:[{t:'Cancel'},{t:'Replace my data',cls:'pri',fn:()=>{snap();D=r.data;if(save()){loadError='';toast('Backup imported');render()}}}]})}
+
+/* ---------- Views ---------- */
+const ban=(c,t,x,b,a)=>`<div class="ban ${c}"><b>${t}</b>${x}${b?`<button class="btn pri" data-act="${a}">${b}</button>`:''}</div>`;
+const card=(t,h)=>`<div class="card"><h2>${t}</h2>${h}</div>`;
+const rows=r=>r.map(x=>`<div class="row"><span>${x[0]}</span><span class="${x[2]||''}">${x[1]}</span></div>`).join('');
+const soon=(t,h)=>`<h1>${t}</h1>`+card('Not built yet',h);
+const V={
+ today(){const d=new Date();let h=`<h1>${d.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long'})}</h1>`;
+  if(loadError)h+=ban('bad','Saved data could not be read','A copy is kept on this device, so nothing was overwritten. Import a backup from Settings. ('+esc(loadError)+')');
+  if(!standalone())h+=ban('','Open Train from the Home Screen icon','Safari tabs and the Home Screen app keep separate data. Tap Share, then Add to Home Screen, and log only from the icon.');
+  if(backupDue())h+=ban('','Backup due','Last backup: '+ago(lastB())+'.','Back up now','exportJson');
+  h+=card('Next workout','<p class="mu">No plan loaded yet. Next stage you will import the plan I write for you, and your next session appears here.</p>');
+  return h+card('Saved on this device',hasData()?rows(counts(D).filter(c=>c[1]>0)):'<p class="mu">Nothing yet.</p>')},
+ train:()=>soon('Train','<p class="mu">Gym logging and the exercise library arrive in Stage 2. Football and treadmill logging arrive in Stage 4.</p>'),
+ food:()=>soon('Food','<p class="mu">Meal plans, eaten and skipped tracking and the grocery list arrive in Stage 5.</p>'),
+ progress:()=>soon('Progress','<p class="mu">Weight trend, strength and running charts arrive in Stage 6. Weigh-ins start in Stage 3.</p>'),
+ settings(){
+  const kb=(new Blob([localStorage.getItem(K.d)||'']).size/1024).toFixed(1),nt=D.bodyWeight.filter(x=>x.test).length;
+  return`<h1>Settings</h1>`+
+  card('Backup',`<p class="mu">Last backup: ${ago(lastB())}. Save the file to iCloud Drive from the share sheet.</p><button class="btn pri" data-act="exportJson">Export JSON backup</button><div class="g2"><button class="btn" data-act="importPick">Import JSON</button><button class="btn" data-act="exportCsv">Export CSV</button></div>`)+
+  card('This device',rows([['Home Screen app',standalone()?'Yes':'No, open from the icon',standalone()?'ok':'wn'],['Works offline',offlineReady?'Yes':'Not yet, reopen once',offlineReady?'ok':'wn'],['Persistent storage',persisted?'Granted':'Not granted',persisted?'ok':'mu'],['Data size',kb+' KB'],['Safety snapshot',ago(localStorage.getItem(K.sm))],['App version',VER],['Data schema','v'+SCHEMA]])+(localStorage.getItem(K.s)?'<div class="gap"><button class="btn" data-act="restore">Restore safety snapshot</button></div>':''))+
+  card('Test tools (stage 1)',`<p class="mu">Add a fake weigh-in to try export, reset and import. Test entries: ${nt}.</p><div class="g2"><button class="btn" data-act="addTest">Add test entry</button><button class="btn" data-act="clearTest">Remove tests</button></div>`)+
+  card('Delete all data','<p class="mu">Erases everything on this device after you confirm.</p><button class="btn bad" data-act="reset">Delete all data</button>')}
+};
+const TABS=[['today','Today','<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'],['train','Train','<path d="M6 8v8M18 8v8M3 10v4M21 10v4M6 12h12"/>'],['food','Food','<path d="M7 3v7a2 2 0 0 0 2 2v9M11 3v7M15 3c-2 2-2 6 0 8v10"/>'],['progress','Progress','<path d="M4 4v16h16M8 15l4-4 3 3 5-6"/>'],['settings','Settings','<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>']];
+$('#tabs').innerHTML=TABS.map(t=>`<button data-tab="${t[0]}"><svg viewBox="0 0 24 24">${t[2]}</svg>${t[1]}</button>`).join('');
+function render(){$('#view').innerHTML=V[tab]();document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.tab===tab))}
+document.addEventListener('click',e=>{
+ const t=e.target.closest('[data-tab]');if(t){tab=t.dataset.tab;render();$('#view').scrollTop=0;return}
+ const a=e.target.closest('[data-act]');if(a&&A[a.dataset.act])A[a.dataset.act]()});
+$('#file').addEventListener('change',e=>{const f=e.target.files[0];e.target.value='';if(f)pickImport(f)});
+render();
+if('serviceWorker' in navigator){
+ addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+ navigator.serviceWorker.ready.then(()=>{offlineReady=true;if(tab==='settings')render()}).catch(()=>{})}
+</script>
+</body>
+</html>
