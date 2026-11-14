@@ -44,7 +44,7 @@ h1{font-size:32px;line-height:1.08;letter-spacing:-.025em;font-weight:800;margin
 .box h3{margin:0 0 8px;font-size:21px;letter-spacing:-.01em}
 .box p{margin:0 0 8px}
 .acts{display:grid;gap:8px;margin-top:14px}
-input[type=text]{width:100%;font:inherit;font-size:16px;padding:12px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--tx);margin-top:10px}
+.box input{width:100%;font:inherit;font-size:16px;padding:12px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--tx);margin-top:10px}
 .cmp{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;margin:8px 0}
 .cmp th{color:var(--mu);font-weight:600}.cmp th,.cmp td{padding:5px 0;text-align:right}.cmp td:first-child,.cmp th:first-child{text-align:left}
 #toast{position:fixed;left:50%;bottom:calc(82px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--tx);color:#0f1a17;padding:10px 16px;border-radius:999px;font-weight:650;z-index:30;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90%;text-align:center}
@@ -58,7 +58,7 @@ input[type=text]{width:100%;font:inherit;font-size:16px;padding:12px;border-radi
 <div id="toast"></div>
 <input type="file" id="file" accept=".json,application/json" hidden>
 <script>
-const APP_ID='gym-tracker',SCHEMA=1,VER='0.1.0 (stage 1)';
+const APP_ID='gym-tracker',SCHEMA=1,VER='0.1.1 (stage 1b)';
 const K={d:'gt:data',s:'gt:snap',sm:'gt:snapmeta',b:'gt:lastbackup'};
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -94,7 +94,7 @@ const load=()=>{const raw=localStorage.getItem(K.d);if(!raw)return newData();con
  if(r.error){try{localStorage.setItem('gt:corrupt',raw)}catch{}loadError=r.error;return newData()}return r.data};
 let D=load();
 const snap=()=>{try{const p=localStorage.getItem(K.d);if(p){localStorage.setItem(K.s,p);localStorage.setItem(K.sm,iso())}}catch{}};
-function save(){try{if((localStorage.getItem(K.sm)||'').slice(0,10)!==iso().slice(0,10))snap();D.updatedAt=iso();localStorage.setItem(K.d,JSON.stringify(D));return true}
+function save(){try{if((localStorage.getItem(K.sm)||'').slice(0,10)!==iso().slice(0,10))snap();D.updatedAt=iso();localStorage.setItem(K.d,JSON.stringify(D));queuePush();return true}
  catch{toast('Could not save: storage is full or blocked');return false}}
 navigator.storage?.persist?.().then(v=>{persisted=v}).catch(()=>{});
 
@@ -103,15 +103,15 @@ const counts=d=>[['Workouts',d.workouts.length],['Cardio sessions',d.cardio.leng
 const hasData=()=>counts(D).some(c=>c[1]>0);
 const ago=t=>{if(!t)return'never';const n=Math.floor((Date.now()-new Date(t))/864e5);return n<1?'today':n===1?'yesterday':n+' days ago'};
 const lastB=()=>localStorage.getItem(K.b);
-const backupDue=()=>hasData()&&(!lastB()||(Date.now()-new Date(lastB()))/864e5>D.settings.backupReminderDays);
+const backupDue=()=>hasData()&&(!lastB()||(Date.now()-new Date(lastB()))/864e5>(cloud.refresh?30:D.settings.backupReminderDays));
 const standalone=()=>navigator.standalone||matchMedia('(display-mode: standalone)').matches;
 let tt;function toast(m){const e=$('#toast');e.textContent=m;e.classList.add('on');clearTimeout(tt);tt=setTimeout(()=>e.classList.remove('on'),2400)}
-function sheet({title,body='',actions=[],input}){
+function sheet({title,body='',actions=[],input,fields=[]}){
  const el=$('#sheet');
- el.innerHTML=`<div class="box"><h3>${esc(title)}</h3>${body}${input?'<input type="text" id="sin" autocapitalize="characters" autocomplete="off" placeholder="'+esc(input)+'">':''}<div class="acts">${actions.map((a,i)=>`<button class="btn ${a.cls||''}" data-i="${i}">${esc(a.t)}</button>`).join('')}</div></div>`;
+ el.innerHTML=`<div class="box"><h3>${esc(title)}</h3>${body}${input?'<input type="text" id="sin" autocapitalize="characters" autocomplete="off" placeholder="'+esc(input)+'">':''}${fields.map(f=>`<input id="${f.id}" type="${f.type||'text'}" value="${esc(f.val)}" placeholder="${esc(f.ph)}" autocapitalize="none" autocorrect="off" autocomplete="off">`).join('')}<div class="acts">${actions.map((a,i)=>`<button class="btn ${a.cls||''}" data-i="${i}">${esc(a.t)}</button>`).join('')}</div></div>`;
  el.hidden=false;
  el.onclick=e=>{const b=e.target.closest('[data-i]');
-  if(b){const a=actions[b.dataset.i];if(a.need&&$('#sin').value.trim()!==a.need)return toast('Type '+a.need+' to confirm');el.hidden=true;a.fn&&a.fn()}
+  if(b){const a=actions[b.dataset.i],v={};el.querySelectorAll('input').forEach(i=>v[i.id]=i.value.trim());if(a.need&&v.sin!==a.need)return toast('Type '+a.need+' to confirm');if(!a.keep)el.hidden=true;a.fn&&a.fn(v,()=>{el.hidden=true})}
   else if(e.target===el)el.hidden=true}}
 async function out(name,text,type){
  const f=new File([text],name,{type});
@@ -131,17 +131,81 @@ const A={
  restore(){const r=validate(localStorage.getItem(K.s)||'');
   if(r.error)return toast('No usable snapshot');
   sheet({title:'Restore snapshot?',body:'<p>Replaces current data with the snapshot from '+esc(ago(localStorage.getItem(K.sm)))+'.</p>'+cmp(r.data),actions:[{t:'Cancel'},{t:'Restore snapshot',cls:'pri',fn:()=>{D=r.data;save();toast('Snapshot restored');render()}}]})},
- reset(){sheet({title:'Delete all data?',body:'<p>This permanently erases every workout, weigh-in, plan and setting on this device, including the safety snapshot. Export a backup first if you might want it back.</p>',input:'Type DELETE',
-  actions:[{t:'Cancel'},{t:'Delete everything',cls:'bad',need:'DELETE',fn:()=>{Object.values(K).forEach(k=>localStorage.removeItem(k));localStorage.removeItem('gt:corrupt');D=newData();loadError='';toast('All data deleted');render()}}]})},
+ reset(){sheet({title:'Delete all data?',body:'<p>This permanently erases every workout, weigh-in, plan and setting on this device, including the safety snapshot. Your cloud backup is not touched; delete it in the Supabase dashboard if you want it gone. Export a backup first if you might want it back.</p>',input:'Type DELETE',
+  actions:[{t:'Cancel'},{t:'Delete everything',cls:'bad',need:'DELETE',fn:()=>{Object.values(K).forEach(k=>localStorage.removeItem(k));localStorage.removeItem('gt:corrupt');D=newData();loadError='';cloud.synced=null;cloud.dirty=false;saveCloud();toast('All data deleted');render()}}]})},
+  cloudSetup(){sheet({title:'Cloud backup',body:'<p class="mu">Enter your Supabase project URL, the publishable (anon) key and the login you created. Never paste a secret or service_role key.</p>',
+  fields:[{id:'url',ph:'Project URL (https://…supabase.co)',val:cloud.url},{id:'key',ph:'Publishable key',val:cloud.key},{id:'em',ph:'Email',val:cloud.email},{id:'pw',ph:'Password',type:'password'}],
+  actions:[{t:'Sign in',cls:'pri',keep:true,fn:async(v,hide)=>{try{await signIn(v.url,v.key,v.em,v.pw);hide();toast('Signed in');sync(true)}catch(e){toast(errMsg(e))}}},{t:'Cancel'}]})},
+ cloudNow(){cloud.refresh?sync(true):A.cloudSetup()},
+ async cloudRestore(){try{const row=await getRow();if(!row)return toast('No cloud backup yet');conflict(row)}catch(e){toast(errMsg(e))}},
+ cloudOut(){cloud.refresh=cloud.access=null;saveCloud();toast('Signed out');render()},
  addTest(){D.bodyWeight.push({id:uid(),date:today(),kg:81,ts:iso(),test:true});if(save()){toast('Test weigh-in added');render()}},
  clearTest(){D.bodyWeight=D.bodyWeight.filter(x=>!x.test);if(save()){toast('Test entries removed');render()}}
 };
-function cmp(n){const c=counts(n),o=counts(D);return'<table class="cmp"><tr><th></th><th>Now</th><th>New</th></tr>'+c.map((r,i)=>`<tr><td>${r[0]}</td><td>${o[i][1]}</td><td>${r[1]}</td></tr>`).join('')+'</table>'}
+function cmp(n,l='New'){const c=counts(n),o=counts(D);return'<table class="cmp"><tr><th></th><th>Now</th><th>'+l+'</th></tr>'+c.map((r,i)=>`<tr><td>${r[0]}</td><td>${o[i][1]}</td><td>${r[1]}</td></tr>`).join('')+'</table>'}
 async function pickImport(f){
  const r=validate(await f.text());
  if(r.error)return sheet({title:'Cannot import',body:'<p>'+esc(r.error)+'</p>',actions:[{t:'OK'}]});
  sheet({title:'Import this backup?',body:'<p class="mu">'+esc(f.name)+'<br>Exported '+(r.data.exportedAt?esc(new Date(r.data.exportedAt).toLocaleString('en-GB')):'(date unknown)')+'</p>'+cmp(r.data)+'<p class="mu">This replaces everything on this device. A safety snapshot of your current data is saved first.</p>',
   actions:[{t:'Cancel'},{t:'Replace my data',cls:'pri',fn:()=>{snap();D=r.data;if(save()){loadError='';toast('Backup imported');render()}}}]})}
+
+/* ---------- Cloud backup (Supabase, optional; the phone stays the main copy) ---------- */
+const CK='gt:cloud';
+let cloud=(()=>{try{return JSON.parse(localStorage.getItem(CK))||{}}catch{return{}}})(),cloudMsg='',syncing=false,again=false,pt;
+const saveCloud=()=>{try{localStorage.setItem(CK,JSON.stringify(cloud))}catch{}};
+const when=t=>t?new Date(t).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'never';
+const errMsg=e=>e instanceof TypeError?'No connection':e.message;
+const queuePush=()=>{if(!cloud.refresh)return;cloud.dirty=true;saveCloud();clearTimeout(pt);pt=setTimeout(()=>sync(false),4000)};
+const ui=()=>{if(tab==='settings'&&$('#sheet').hidden)render()};
+function setSession(j){cloud.access=j.access_token;cloud.refresh=j.refresh_token;cloud.exp=Date.now()+j.expires_in*1000;if(j.user)cloud.uid=j.user.id;saveCloud()}
+async function signIn(url,key,email,pw){
+ url=url.replace(/\/+$/,'');
+ if(!/^https:\/\//.test(url)||!key||!email||!pw)throw Error('Fill in all four fields.');
+ if(/^sb_secret_/.test(key)||(()=>{try{return JSON.parse(atob(key.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).role==='service_role'}catch{return false}})())throw Error('That is a secret key. Use the publishable or anon key.');
+ const r=await fetch(url+'/auth/v1/token?grant_type=password',{method:'POST',headers:{apikey:key,'Content-Type':'application/json'},body:JSON.stringify({email,password:pw})});
+ const j=await r.json().catch(()=>({}));
+ if(!r.ok)throw Error(j.error_description||j.msg||'Sign-in failed');
+ const prev=cloud.uid;cloud={...cloud,url,key,email};setSession(j);
+ if(prev!==cloud.uid){cloud.synced=null;cloud.lastOk=null;cloud.dirty=false;saveCloud()}}
+async function token(){
+ if(cloud.access&&Date.now()<cloud.exp-60000)return cloud.access;
+ const r=await fetch(cloud.url+'/auth/v1/token?grant_type=refresh_token',{method:'POST',headers:{apikey:cloud.key,'Content-Type':'application/json'},body:JSON.stringify({refresh_token:cloud.refresh})});
+ if(!r.ok){if(r.status<500){cloud.refresh=cloud.access=null;saveCloud()}throw Error('Signed out. Please sign in again.')}
+ setSession(await r.json());return cloud.access}
+async function api(path,opt={}){
+ const t=await token();
+ const r=await fetch(cloud.url+path,{...opt,headers:{apikey:cloud.key,Authorization:'Bearer '+t,'Content-Type':'application/json',...opt.headers}});
+ if(!r.ok){const j=await r.json().catch(()=>({}));const e=Error(j.message||'Cloud error '+r.status);e.status=r.status;throw e}
+ return r.json()}
+const getRow=async()=>(await api('/rest/v1/backups?select=data,updated_at'))[0]||null;
+// Compare-and-set: only overwrites the cloud copy this device last saw, so another device's newer data is never clobbered.
+async function push(){
+ const body={data:D,updated_at:iso()},h={Prefer:'return=representation'};
+ if(cloud.synced)return(await api('/rest/v1/backups?user_id=eq.'+cloud.uid+'&updated_at=eq.'+encodeURIComponent(cloud.synced),{method:'PATCH',headers:h,body:JSON.stringify(body)}))[0]||null;
+ try{return(await api('/rest/v1/backups',{method:'POST',headers:h,body:JSON.stringify({...body,user_id:cloud.uid})}))[0]}catch(e){if(e.status===409)return null;throw e}}
+async function sync(manual){
+ if(!cloud.refresh)return;
+ if(syncing){again=true;return}
+ if(!manual&&!hasData())return;
+ syncing=true;cloudMsg='Backing up…';ui();
+ try{
+  const r=await push();
+  if(r){cloud.synced=r.updated_at;cloud.lastOk=iso();cloud.dirty=false;saveCloud();cloudMsg='';if(manual)toast('Cloud backup done')}
+  else if(manual)await conflict(await getRow());
+  else cloudMsg='Cloud has different data. Open Settings and tap Back up now.';
+ }catch(e){cloudMsg=navigator.onLine===false||e instanceof TypeError?'Waiting for connection':e.message;if(manual)toast(cloudMsg)}
+ syncing=false;ui();if(again){again=false;sync(false)}}
+function conflict(row){
+ if(!row){cloud.synced=null;saveCloud();again=true;return}
+ const r=validate(row.data);
+ if(r.error){cloudMsg='Cloud copy unreadable: '+r.error;return}
+ sheet({title:'Cloud already has a backup',body:'<p class="mu">Saved '+esc(when(row.updated_at))+'. Choose which copy to keep. Nothing changes until you tap.</p>'+cmp(r.data,'Cloud'),
+  actions:[{t:'Use cloud data on this phone',cls:'pri',fn:()=>{snap();D=r.data;save();clearTimeout(pt);Object.assign(cloud,{synced:row.updated_at,dirty:false,lastOk:iso()});saveCloud();toast('Restored from cloud');render()}},
+   ...(hasData()?[{t:'Overwrite cloud with this phone',cls:'bad',fn:()=>{cloud.synced=row.updated_at;saveCloud();sync(true)}}]:[]),{t:'Decide later'}]})}
+function cloudCard(){
+ if(!cloud.refresh)return card('Cloud backup','<p class="mu">Automatic backup to your own Supabase project, so a lost or wiped phone does not lose your data.</p><button class="btn pri" data-act="cloudSetup">'+(cloud.url?'Sign in':'Set up cloud backup')+'</button>');
+ const st=cloudMsg||(cloud.dirty?'Waiting to back up':'Up to date');
+ return card('Cloud backup',rows([['Account',esc(cloud.email)],['Last cloud backup',when(cloud.lastOk)],['Status',esc(st),cloudMsg?'wn':'ok']])+'<div class="g2"><button class="btn pri" data-act="cloudNow">Back up now</button><button class="btn" data-act="cloudRestore">Restore</button></div><div class="gap"><button class="btn" data-act="cloudOut">Sign out</button></div>')}
 
 /* ---------- Views ---------- */
 const ban=(c,t,x,b,a)=>`<div class="ban ${c}"><b>${t}</b>${x}${b?`<button class="btn pri" data-act="${a}">${b}</button>`:''}</div>`;
@@ -152,6 +216,8 @@ const V={
  today(){const d=new Date();let h=`<h1>${d.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long'})}</h1>`;
   if(loadError)h+=ban('bad','Saved data could not be read','A copy is kept on this device, so nothing was overwritten. Import a backup from Settings. ('+esc(loadError)+')');
   if(!standalone())h+=ban('','Open Train from the Home Screen icon','Safari tabs and the Home Screen app keep separate data. Tap Share, then Add to Home Screen, and log only from the icon.');
+  if(cloud.url&&!cloud.refresh)h+=ban('bad','Cloud backup is signed out','Sign in again so new data is backed up.','Sign in','cloudSetup');
+  else if(cloud.refresh&&cloud.dirty&&hasData()&&(!cloud.lastOk||(Date.now()-new Date(cloud.lastOk))/864e5>2))h+=ban('','Cloud backup is behind','Last cloud backup: '+when(cloud.lastOk)+'. It retries when you are online.','Back up now','cloudNow');
   if(backupDue())h+=ban('','Backup due','Last backup: '+ago(lastB())+'.','Back up now','exportJson');
   h+=card('Next workout','<p class="mu">No plan loaded yet. Next stage you will import the plan I write for you, and your next session appears here.</p>');
   return h+card('Saved on this device',hasData()?rows(counts(D).filter(c=>c[1]>0)):'<p class="mu">Nothing yet.</p>')},
@@ -161,7 +227,7 @@ const V={
  settings(){
   const kb=(new Blob([localStorage.getItem(K.d)||'']).size/1024).toFixed(1),nt=D.bodyWeight.filter(x=>x.test).length;
   return`<h1>Settings</h1>`+
-  card('Backup',`<p class="mu">Last backup: ${ago(lastB())}. Save the file to iCloud Drive from the share sheet.</p><button class="btn pri" data-act="exportJson">Export JSON backup</button><div class="g2"><button class="btn" data-act="importPick">Import JSON</button><button class="btn" data-act="exportCsv">Export CSV</button></div>`)+
+  cloudCard()+card('File backup',`<p class="mu">Your second copy, independent of the cloud. Last export: ${ago(lastB())}. Save it to iCloud Drive from the share sheet.</p><button class="btn pri" data-act="exportJson">Export JSON backup</button><div class="g2"><button class="btn" data-act="importPick">Import JSON</button><button class="btn" data-act="exportCsv">Export CSV</button></div>`)+
   card('This device',rows([['Home Screen app',standalone()?'Yes':'No, open from the icon',standalone()?'ok':'wn'],['Works offline',offlineReady?'Yes':'Not yet, reopen once',offlineReady?'ok':'wn'],['Persistent storage',persisted?'Granted':'Not granted',persisted?'ok':'mu'],['Data size',kb+' KB'],['Safety snapshot',ago(localStorage.getItem(K.sm))],['App version',VER],['Data schema','v'+SCHEMA]])+(localStorage.getItem(K.s)?'<div class="gap"><button class="btn" data-act="restore">Restore safety snapshot</button></div>':''))+
   card('Test tools (stage 1)',`<p class="mu">Add a fake weigh-in to try export, reset and import. Test entries: ${nt}.</p><div class="g2"><button class="btn" data-act="addTest">Add test entry</button><button class="btn" data-act="clearTest">Remove tests</button></div>`)+
   card('Delete all data','<p class="mu">Erases everything on this device after you confirm.</p><button class="btn bad" data-act="reset">Delete all data</button>')}
@@ -174,6 +240,8 @@ document.addEventListener('click',e=>{
  const a=e.target.closest('[data-act]');if(a&&A[a.dataset.act])A[a.dataset.act]()});
 $('#file').addEventListener('change',e=>{const f=e.target.files[0];e.target.value='';if(f)pickImport(f)});
 render();
+addEventListener('online',()=>sync(false));document.addEventListener('visibilitychange',()=>{if(!document.hidden&&cloud.dirty)sync(false)});
+if(cloud.refresh&&cloud.dirty)sync(false);
 if('serviceWorker' in navigator){
  addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
  navigator.serviceWorker.ready.then(()=>{offlineReady=true;if(tab==='settings')render()}).catch(()=>{})}

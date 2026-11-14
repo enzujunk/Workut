@@ -1,4 +1,4 @@
-const C='train-v1';
+const C='train-v2';
 const FILES=['./','index.html','manifest.webmanifest','icon-180.png','icon-192.png','icon-512.png'];
 self.addEventListener('install',e=>{
   e.waitUntil(caches.open(C).then(c=>c.addAll(FILES)).then(()=>self.skipWaiting()));
@@ -8,7 +8,7 @@ self.addEventListener('activate',e=>{
 });
 // Serve from cache instantly, refresh the cache in the background when online.
 self.addEventListener('fetch',e=>{
-  if(e.request.method!=='GET')return;
+  if(e.request.method!=='GET'||new URL(e.request.url).origin!==location.origin)return; // never intercept Supabase calls
   e.respondWith(caches.match(e.request,{ignoreSearch:true}).then(hit=>{
     const net=fetch(e.request).then(r=>{
       if(r.ok&&new URL(e.request.url).origin===location.origin){const copy=r.clone();caches.open(C).then(c=>c.put(e.request,copy))}
