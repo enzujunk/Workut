@@ -67,7 +67,7 @@ h1{font-size:32px;line-height:1.08;letter-spacing:-.025em;font-weight:800;margin
 <div id="toast"></div>
 <input type="file" id="file" accept=".json,application/json" hidden>
 <script>
-const APP_ID='gym-tracker',SCHEMA=1,VER='0.3.1 (cardio)';
+const APP_ID='gym-tracker',SCHEMA=1,VER='0.4.0 (weight, calories)';
 const K={d:'gt:data',s:'gt:snap',sm:'gt:snapmeta',b:'gt:lastbackup'};
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -80,7 +80,7 @@ const newData=()=>({app:APP_ID,schemaVersion:SCHEMA,createdAt:iso(),
  profile:{heightCm:178,sex:'male',goalWeightKg:73,targetKcal:null,targetProteinG:null},
  settings:{restTimerSec:90,activeScheduleMode:'preseason',loadStepKg:2.5,backupReminderDays:7},
  schedule:{modes:{preseason:{football:[2,4],matchDay:null},season:{football:[1,3,4],matchDay:null}},weekOverrides:{}},
- exercises:[],plan:null,workouts:[],cardio:[],benchmarks:[],bodyWeight:[],checkins:[],
+ exercises:[],plan:null,workouts:[],cardio:[],benchmarks:[],bodyWeight:[],checkins:[],energy:{},
  nutrition:{foods:[],recipes:[],mealPlans:[],mealLog:[]}});
 // Future versions: add a step here, e.g. MIGRATIONS[1]=d=>{…change shape…;d.schemaVersion=2;return d}
 const MIGRATIONS={};
@@ -108,7 +108,7 @@ function save(){try{if((localStorage.getItem(K.sm)||'').slice(0,10)!==iso().slic
 navigator.storage?.persist?.().then(v=>{persisted=v}).catch(()=>{});
 
 /* ---------- Helpers ---------- */
-const counts=d=>[['Workouts',d.workouts.length],['Cardio sessions',d.cardio.length],['Weigh-ins',d.bodyWeight.length],['Check-ins',d.checkins.length],['Exercises',d.exercises.length],['Recipes',d.nutrition.recipes.length],['Plan sessions',d.plan?.sessions?.length||0]];
+const counts=d=>[['Workouts',d.workouts.length],['Cardio sessions',d.cardio.length],['Weigh-ins',d.bodyWeight.length],['Check-ins',d.checkins.length],['Exercises',d.exercises.length],['Recipes',d.nutrition.recipes.length],['Food entries',d.nutrition.mealLog.length],['Plan sessions',d.plan?.sessions?.length||0]];
 const hasData=()=>counts(D).some(c=>c[1]>0);
 const ago=t=>{if(!t)return'never';const n=Math.floor((Date.now()-new Date(t))/864e5);return n<1?'today':n===1?'yesterday':n+' days ago'};
 const lastB=()=>localStorage.getItem(K.b);
@@ -149,7 +149,9 @@ const A={
   actions:[{t:'Sign in',cls:'pri',keep:true,fn:async(v,hide)=>{try{await signIn(v.url,v.key,v.em,v.pw);hide();toast('Signed in');sync(true)}catch(e){toast(errMsg(e))}}},{t:'Cancel'}]})},
  cloudNow(){cloud.refresh?sync(true):A.cloudSetup()},
  async cloudRestore(){try{const row=await getRow();if(!row)return toast('No cloud backup yet');conflict(row)}catch(e){toast(errMsg(e))}},
- cloudOut(){cloud.refresh=cloud.access=null;saveCloud();toast('Signed out');render()},
+ weighNew(){weighForm()},weighEdit:weighForm,foodAdd(){foodForm()},foodEdit:foodForm,actForm,energySet:energyForm,
+ fPrev(){fdate=addDays(fdate||ymd(new Date()),-1);render()},fNext(){const t=ymd(new Date()),n=addDays(fdate||t,1);fdate=n>t?null:n;render()},fToday(){fdate=null;render()},
+ checkUpdate,cloudOut(){cloud.refresh=cloud.access=null;saveCloud();toast('Signed out');render()},
  addTest(){D.bodyWeight.push({id:uid(),date:today(),kg:81,ts:iso(),test:true});if(save()){toast('Test weigh-in added');render()}},
  clearTest(){D.bodyWeight=D.bodyWeight.filter(x=>!x.test);if(save()){toast('Test entries removed');render()}}
 };
@@ -223,8 +225,8 @@ function cloudCard(){
 /* ---------- Exercise library, plan, recommendation ---------- */
 const MG=['chest','back','shoulders','quads','hamstrings','glutes','calves','biceps','triceps','core','conditioning'];
 const PT=['horizontal push','vertical push','horizontal pull','vertical pull','squat','lunge','hinge','isolation','calf','ankle','mobility','balance','core','cardio'];
-const EQ=['barbell','dumbbell','machine','cable','bodyweight'];
-const DAY=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'],MODES={preseason:'Preseason',season:'Season'},LOADS=['upper','heavy_legs','light_legs','mobility'],LIBV=1;
+const EQ=['barbell','dumbbell','machine','cable','band','bodyweight'];
+const DAY=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'],MODES={preseason:'Preseason',season:'Season',rehab:'No football'},LOADS=['upper','heavy_legs','light_legs','mobility'],LIBV=2;
 let sub='plan';
 const LIB=`bench_press|Barbell bench press|chest|horizontal push|barbell|0|1
 db_incline|Incline dumbbell press|chest|horizontal push|dumbbell|0|0
@@ -262,7 +264,15 @@ single_leg_balance|Single-leg balance|calves|balance|bodyweight|1|0
 plank|Plank|core|core|bodyweight|1|0
 dead_bug|Dead bug|core|core|bodyweight|1|0
 cable_crunch|Cable crunch|core|core|cable|0|0
-pallof|Pallof press|core|core|cable|0|0`.split('\n').map(l=>{const[id,name,muscleGroup,pattern,equipment,b,m]=l.split('|');return{id,name,muscleGroup,pattern,equipment,bodyweight:b==='1',isMain:m==='1'}});
+pallof|Pallof press|core|core|cable|0|0
+quad_set|Quad set (knee rehab)|quads|isolation|bodyweight|1|0
+slr|Straight leg raise|quads|isolation|bodyweight|1|0
+heel_slide|Heel slide|quads|mobility|bodyweight|1|0
+tke|Terminal knee extension (band)|quads|isolation|band|1|0
+glute_bridge|Glute bridge|glutes|hinge|bodyweight|1|0
+clamshell|Side-lying hip abduction|glutes|isolation|bodyweight|1|0
+chair_squat|Squat to chair (pain-free range)|quads|squat|bodyweight|1|0
+bird_dog|Bird dog|core|core|bodyweight|1|0`.split('\n').map(l=>{const[id,name,muscleGroup,pattern,equipment,b,m]=l.split('|');return{id,name,muscleGroup,pattern,equipment,bodyweight:b==='1',isMain:m==='1'}});
 function seed(){if(D.libSeeded===LIBV)return;const have=new Set(D.exercises.map(e=>e.id));LIB.forEach(e=>have.has(e.id)||D.exercises.push({...e}));D.libSeeded=LIBV}
 const fieldHtml=f=>'<div class="fw'+(f.half?' h':'')+'">'+(f.l?`<label class="fl" for="${f.id}">${esc(f.l)}</label>`:'')+(f.type==='area'?`<textarea id="${f.id}" placeholder="${esc(f.ph)}" autocapitalize="none" autocorrect="off" spellcheck="false"></textarea>`:f.type==='select'?`<select id="${f.id}">${f.opts.map(o=>`<option${o===f.val?' selected':''}>${esc(o)}</option>`).join('')}</select>`:`<input id="${f.id}" type="${f.type||'text'}" inputmode="${f.im||''}" step="any" value="${esc(f.val)}" placeholder="${esc(f.ph)}" autocapitalize="none" autocorrect="off" autocomplete="off">`)+'</div>';
 const ymd=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
@@ -349,6 +359,57 @@ function vCardio(){
  return'<button class="btn pri" data-act="cardioNew">Log a session</button><div class="gap"></div>'+card('Load',rows([['Last 7 days',sum(7)],['Last 28 days',sum(28)]]))+
   card('History',list.length?list.map(e=>`<div class="row" data-act="cardioEdit" data-id="${esc(e.id)}"><span>${dlabel(e.date)} · ${esc(CT[e.type]||e.type)}${e.format?' ('+esc(e.format)+')':''}${e.label?' ('+esc(e.label)+')':''}${e.benchmark?' ★':''}<br><span class="mu">${esc(cStats(e))}</span></span></div>`).join(''):'<p class="mu">Nothing logged yet.</p>')}
 
+// Compares this version with the live file. Clears only the offline file cache, never your data.
+async function checkUpdate(){
+ try{const t=await(await fetch('index.html',{cache:'no-cache'})).text(),m=t.match(/VER='([^']+)'/);
+  if(m&&m[1]!==VER){(await caches.keys()).forEach(k=>caches.delete(k));const g=navigator.serviceWorker&&await navigator.serviceWorker.getRegistration();if(g)await g.update();toast('Updating to '+m[1]+'…');setTimeout(()=>location.reload(),800)}
+  else toast('You have the latest version: '+VER,3500)}
+ catch{toast('Could not check. Are you online?')}}
+
+/* ---------- Body weight and calories ---------- */
+let fdate=null;
+const sortW=()=>[...D.bodyWeight].sort((a,b)=>a.date<b.date?-1:1);
+const addDays=(x,n)=>{const d=new Date(x+'T12:00');d.setDate(d.getDate()+n);return ymd(d)};
+const mean=a=>a.reduce((x,y)=>x+y,0)/a.length;
+const wAvg=(from,to)=>{const r=D.bodyWeight.filter(e=>e.date>=from&&e.date<=to);return r.length?mean(r.map(e=>e.kg)):null};
+const sgn=(n,u)=>(n>0?'+':n<0?'−':'')+Math.abs(n).toFixed(1)+' '+u;
+function weighForm(date){
+ const e=D.bodyWeight.find(x=>x.date===date)||{date:ymd(new Date())};
+ sheet({title:e.id?'Edit weight':'Log weight',fields:[{id:'date',l:'Date',type:'date',val:e.date},{id:'kg',l:'Weight (kg)',type:'number',im:'decimal',val:e.kg}],
+  actions:[{t:'Save',cls:'pri',keep:true,fn:(v,hide)=>{const kg=num(v.kg);if(!kg||kg<30||kg>250||!v.date)return toast('Enter a weight and a date');
+   if(e.id&&v.date!==e.date)D.bodyWeight=D.bodyWeight.filter(y=>y!==e);
+   const x=D.bodyWeight.find(y=>y.date===v.date);if(x)x.kg=kg;else D.bodyWeight.push({id:uid(),date:v.date,kg,ts:iso()});hide();save();render()}},
+  ...(e.id?[{t:'Delete',cls:'bad',fn:()=>{D.bodyWeight=D.bodyWeight.filter(y=>y!==e);save();render()}}]:[]),{t:'Cancel'}]})}
+function weighCard(){const t=ymd(new Date()),e=D.bodyWeight.find(x=>x.date===t),l=sortW().pop(),a=wAvg(addDays(t,-6),t),g=D.profile.goalWeightKg||73;
+ return card('Weight',`<p style="font-size:26px;font-weight:800;margin:0 0 4px">${e?e.kg.toFixed(1)+' kg today':l?l.kg.toFixed(1)+' kg on '+dlabel(l.date):'No weigh-in yet'}</p><p class="mu">${a?'7-day average '+a.toFixed(1)+' kg · '+(a>g?(a-g).toFixed(1)+' kg above your '+g+' kg goal':'goal reached'):'Weigh in each morning for a clear trend.'}</p><button class="btn pri" data-act="${e?'weighEdit':'weighNew'}" data-id="${t}">${e?'Update today':'Log weight'}</button>`)}
+function wChart(){
+ const all=sortW().slice(-60);if(all.length<2)return'<p class="mu">Log at least two weigh-ins to see the trend.</p>';
+ const day=e=>Math.round((new Date(e.date+'T12:00')-new Date(all[0].date+'T12:00'))/864e5),g=D.profile.goalWeightKg||73;
+ const ma=all.map(e=>({d:day(e),k:mean(all.filter(x=>day(x)<=day(e)&&day(x)>day(e)-7).map(x=>x.kg))}));
+ const ks=[...all.map(e=>e.kg),g],lo=Math.floor(Math.min(...ks)-.5),hi=Math.ceil(Math.max(...ks)+.5),W=320,H=170,mx=Math.max(1,day(all[all.length-1])),X=d=>(34+(W-44)*d/mx).toFixed(1),Y=k=>(H-18-(H-34)*(k-lo)/(hi-lo)).toFixed(1);
+ return`<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Weight trend: dots are daily weigh-ins, the amber line is the 7-day average"><line x1="34" x2="${W-10}" y1="${Y(g)}" y2="${Y(g)}" stroke="#6fe0a0" stroke-dasharray="4 4"/><text x="2" y="${+Y(g)+4}" fill="#6fe0a0" font-size="10">${g}</text><text x="2" y="14" fill="#8da39a" font-size="10">${hi}</text><text x="2" y="${H-14}" fill="#8da39a" font-size="10">${lo}</text><polyline points="${ma.map(m=>X(m.d)+','+Y(m.k)).join(' ')}" fill="none" stroke="#ffc247" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>${all.map(e=>`<circle cx="${X(day(e))}" cy="${Y(e.kg)}" r="2.5" fill="#8da39a"/>`).join('')}</svg><p class="mu">Dots are daily weigh-ins. The amber line is the 7-day average. Dashed green is your goal.</p>`}
+function vProgress(){
+ const t=ymd(new Date()),a=wAvg(addDays(t,-6),t),b=wAvg(addDays(t,-13),addDays(t,-7)),all=sortW(),f=all[0],l=all[all.length-1];
+ const list=[...all].reverse().map((e,i,r)=>`<div class="row" data-act="weighEdit" data-id="${e.date}"><span>${dlabel(e.date)}</span><span>${e.kg.toFixed(1)} kg${r[i+1]?' <span class="mu">'+sgn(e.kg-r[i+1].kg,'kg')+'</span>':''}</span></div>`).join('');
+ return'<h1>Progress</h1><button class="btn pri" data-act="weighNew">Log weight</button><div class="gap"></div>'+card('Weight trend',wChart())+card('Change',rows([['7-day average',a?a.toFixed(1)+' kg':'–'],['Change vs previous week',a&&b?sgn(a-b,'kg'):'–'],['Since first weigh-in',f&&l&&f!==l?sgn(l.kg-f.kg,'kg'):'–'],['Goal',(D.profile.goalWeightKg||73)+' kg']]))+card('Weigh-ins',list||'<p class="mu">Nothing logged yet.</p>')}
+const restKcal=()=>{const p=D.profile,l=sortW().pop(),w=l?l.kg:81;return Math.round(p.restKcal||10*w+6.25*(p.heightCm||178)-5*(p.age||29)+(p.sex==='female'?-161:5))};
+function foodForm(id){const d=fdate||ymd(new Date()),e=D.nutrition.mealLog.find(x=>x.id===id)||{};
+ sheet({title:e.id?'Edit food':'Add food',fields:[{id:'name',l:'What did you eat?',ph:'e.g. chicken and rice',val:e.name},{id:'kcal',l:'Calories (kcal)',type:'number',im:'decimal',half:true,val:e.kcal},{id:'prot',l:'Protein (g, optional)',type:'number',im:'decimal',half:true,val:e.proteinG}],
+  actions:[{t:'Save',cls:'pri',keep:true,fn:(v,hide)=>{const k=num(v.kcal);if(k==null||k<0)return toast('Enter the calories');
+   const o={...e,id:e.id||uid(),ts:e.ts||iso(),date:e.date||d,source:'quick',name:v.name,kcal:k,proteinG:num(v.prot)};if(e.id)Object.assign(e,o);else D.nutrition.mealLog.push(o);hide();save();render()}},
+  ...(e.id?[{t:'Delete',cls:'bad',fn:()=>{D.nutrition.mealLog=D.nutrition.mealLog.filter(x=>x!==e);save();render()}}]:[]),{t:'Cancel'}]})}
+function actForm(){const d=fdate||ymd(new Date());
+ sheet({title:'Other active calories',body:'<p class="mu">Gym sessions, walking or anything not in your cardio log. Calories you enter in a cardio session are added automatically, so leave those out.</p>',fields:[{id:'k',l:'kcal for '+dlabel(d),type:'number',im:'decimal',val:(D.energy[d]||{}).extraKcal}],
+  actions:[{t:'Save',cls:'pri',keep:true,fn:(v,hide)=>{D.energy[d]={...D.energy[d],extraKcal:num(v.k)||0};hide();save();render()}},{t:'Cancel'}]})}
+function energyForm(){const p=D.profile;
+ sheet({title:'Calorie settings',body:'<p class="mu">Resting burn is estimated from your age, height and latest weight. If your Apple Watch shows resting calories, enter that number to override the estimate.</p>',fields:[{id:'age',l:'Age',type:'number',im:'numeric',half:true,val:p.age||29},{id:'rest',l:'Resting kcal/day (optional)',type:'number',im:'numeric',half:true,val:p.restKcal},{id:'tk',l:'Daily calorie target',type:'number',im:'numeric',half:true,val:p.targetKcal},{id:'tp',l:'Protein target (g)',type:'number',im:'numeric',half:true,val:p.targetProteinG}],
+  actions:[{t:'Save',cls:'pri',keep:true,fn:(v,hide)=>{Object.assign(D.profile,{age:num(v.age)||29,restKcal:num(v.rest),targetKcal:num(v.tk),targetProteinG:num(v.tp)});hide();save();render()}},{t:'Cancel'}]})}
+function vFood(){
+ const t=ymd(new Date()),d=fdate||t,p=D.profile,ent=D.nutrition.mealLog.filter(e=>e.date===d).sort((a,b)=>a.ts<b.ts?-1:1);
+ const eat=ent.reduce((a,e)=>a+(e.kcal||0),0),pro=ent.reduce((a,e)=>a+(e.proteinG||0),0),rest=restKcal(),cd=Math.round(D.cardio.filter(e=>e.date===d).reduce((a,e)=>a+(e.kcal||0),0)),ex=(D.energy[d]||{}).extraKcal||0,burn=rest+cd+ex,bal=Math.round(eat-burn);
+ const nav=`<div class="seg"><button class="btn" data-act="fPrev">‹</button><button class="btn" data-act="fToday">${d===t?'Today':dlabel(d)}</button><button class="btn" data-act="fNext">›</button></div>`;
+ return'<h1>Food</h1>'+nav+card('Energy balance',rows([['Eaten',eat+' kcal'+(p.targetKcal?' of '+p.targetKcal:'')],['Resting burn (estimate)',rest+' kcal'],['Active burn',(cd+ex)+' kcal'+(cd&&ex?' ('+cd+' cardio + '+ex+' other)':'')],['Total burned',burn+' kcal'],['Balance',(bal>0?'+':bal<0?'−':'')+Math.abs(bal)+' kcal '+(bal>0?'surplus':'deficit'),bal>0?'wn':'ok'],['Protein',Math.round(pro)+' g'+(p.targetProteinG?' of '+p.targetProteinG:'')]])+'<div class="g2"><button class="btn pri" data-act="foodAdd">Add food</button><button class="btn" data-act="actForm">Other active kcal</button></div><div class="gap"><button class="btn" data-act="energySet">Calorie settings</button></div>')+card('Eaten',ent.length?ent.map(e=>`<div class="row" data-act="foodEdit" data-id="${esc(e.id)}"><span>${esc(e.name||'Food')}</span><span>${e.kcal} kcal${e.proteinG!=null?' <span class="mu">'+e.proteinG+' g</span>':''}</span></div>`).join(''):'<p class="mu">Nothing logged for this day.</p>')}
+
 /* ---------- Views ---------- */
 const ban=(c,t,x,b,a)=>`<div class="ban ${c}"><b>${t}</b>${x}${b?`<button class="btn pri" data-act="${a}">${b}</button>`:''}</div>`;
 const card=(t,h)=>`<div class="card"><h2>${t}</h2>${h}</div>`;
@@ -361,16 +422,16 @@ const V={
   if(cloud.url&&!cloud.refresh)h+=ban('bad','Cloud backup is signed out','Sign in again so new data is backed up.','Sign in','cloudSetup');
   else if(cloud.refresh&&cloud.dirty&&hasData()&&(!cloud.lastOk||(Date.now()-new Date(cloud.lastOk))/864e5>2))h+=ban('','Cloud backup is behind','Last cloud backup: '+when(cloud.lastOk)+'. It retries when you are online.','Back up now','cloudNow');
   if(backupDue())h+=ban('','Backup due','Last backup: '+ago(lastB())+'.','Back up now','exportJson');
-  h+=nextCard();
+  h+=nextCard()+weighCard();
   return h+card('Saved on this device',hasData()?rows(counts(D).filter(c=>c[1]>0)):'<p class="mu">Nothing yet.</p>')},
  train:()=>vTrain(),
- food:()=>soon('Food','<p class="mu">Meal plans, eaten and skipped tracking and the grocery list arrive in Stage 5.</p>'),
- progress:()=>soon('Progress','<p class="mu">Weight trend, strength and running charts arrive in Stage 6. Weigh-ins start in Stage 3.</p>'),
+ food:()=>vFood(),
+ progress:()=>vProgress(),
  settings(){
   const kb=(new Blob([localStorage.getItem(K.d)||'']).size/1024).toFixed(1),nt=D.bodyWeight.filter(x=>x.test).length;
   return`<h1>Settings</h1>`+
   modeCard()+cloudCard()+card('File backup',`<p class="mu">Your second copy, independent of the cloud. Last export: ${ago(lastB())}. Save it to iCloud Drive from the share sheet.</p><button class="btn pri" data-act="exportJson">Export JSON backup</button><div class="g2"><button class="btn" data-act="importPick">Import JSON</button><button class="btn" data-act="exportCsv">Export CSV</button></div>`)+
-  card('This device',rows([['Home Screen app',standalone()?'Yes':'No, open from the icon',standalone()?'ok':'wn'],['Works offline',offlineReady?'Yes':'Not yet, reopen once',offlineReady?'ok':'wn'],['Persistent storage',persisted?'Granted':'Not granted',persisted?'ok':'mu'],['Data size',kb+' KB'],['Safety snapshot',ago(localStorage.getItem(K.sm))],['App version',VER],['Data schema','v'+SCHEMA]])+(localStorage.getItem(K.s)?'<div class="gap"><button class="btn" data-act="restore">Restore safety snapshot</button></div>':''))+
+  card('This device',rows([['Home Screen app',standalone()?'Yes':'No, open from the icon',standalone()?'ok':'wn'],['Works offline',offlineReady?'Yes':'Not yet, reopen once',offlineReady?'ok':'wn'],['Persistent storage',persisted?'Granted':'Not granted',persisted?'ok':'mu'],['Data size',kb+' KB'],['Safety snapshot',ago(localStorage.getItem(K.sm))],['App version',VER],['Data schema','v'+SCHEMA]])+(localStorage.getItem(K.s)?'<div class="gap"><button class="btn" data-act="restore">Restore safety snapshot</button></div>':'')+'<div class="gap"><button class="btn" data-act="checkUpdate">Check for updates</button></div>')+
   card('Test tools (stage 1)',`<p class="mu">Add a fake weigh-in to try export, reset and import. Test entries: ${nt}.</p><div class="g2"><button class="btn" data-act="addTest">Add test entry</button><button class="btn" data-act="clearTest">Remove tests</button></div>`)+
   card('Delete all data','<p class="mu">Erases everything on this device after you confirm.</p><button class="btn bad" data-act="reset">Delete all data</button>')}
 };
